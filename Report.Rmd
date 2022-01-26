@@ -1,0 +1,398 @@
+---
+title: "Audi Used Car Price Analysis"
+author: 'Ashley Tian, Chenyu Wang, Rachel Liu & Xiao Hu'
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+# INTRODUCTION
+
+## Motivation
+
+When purchasing a used car from a dealership or a private party, it is important to know what factors may impact on the car's true remaining value. Customers with a budget constraint, such as students and low-income individuals, are vulnerable to unexpected problems when they buy a second-hand car. Technically, if customers may afford to own a new car sold by the manufacturer, they could be reasonably guaranteed that it has not been in an accident or tampered with. But a second-hand vehicle could have been used in any number of ways, and just because it does not seem to wear and tear does not mean there is not a problem. Moreover, customers also need to be concerned about the non-standardized price in the used car market. Theoretically, a car with more frequent use and shorter life could lead to a lower value. However, even if we would assume used cars are sold under good conditions, our data shows some fluctuation in prices of used cars registered from year to year. Hence, it is of our interest to analyze what variables may play a major role in affecting the selling price of a used car of a popular brand. In addition, we will further use the best fitted model to try to use the variables to predict the specific type of used car price using parametric and non-parametric methods.
+
+## Source of Data
+
+All visualizations and code produced by the sample data of "Audi used car listings" by Mysar Ahmad Bhat, a Kaggle expert, are open access under the Creative Commons by license. The raw dataset contains 9 variables of 10668 Audi used cars registered from 1997 to 2020 with prices ranging from 1490 to 145000 Euros. For the purpose of the report, we perform an analysis on the linear relationship of the car price given 3 categorical variables and 5 quantitative variables. 
+
+## Variables of Interest
+
+In this report, the response variable is the price (in Euros) of an Audi used car. We consider that the price depends linearly on eight types of explanatory variables including the vehicle's model type, year of registration, transmission type, mileage, engine fuel type, road tax, miles per gallon and engine size (in litres). For example, among these covariates, the price of engine fuel (i.e., petrol and diesel) is likely an external factor that can linearly affect used car values because the vehicle models are rarely hybrid but powered by petrol or diesel.
+
+# EXPLORATORY DATA ANALYSIS
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+#read data
+library(readr)
+audi<- read_csv("audi (1).csv")
+```
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+library(ggplot2)
+library(lubridate)
+library(tidyverse)
+library(dplyr)
+library(ggcorrplot)
+library(ggpubr)
+library(randomForest)
+library(caret)
+library(glmnet)
+library(mgcv)
+library(ranger)
+```
+
+## Numerical Variable
+There are 6 numerical variables: year, price (in Euros), millage, tax, mpg (mile per gallon) and engine size (in liters). Price is the response variable of interest while the other five are explanatory variables.
+
+The mean, median, minimum and maximum of all numerical variables are shown in Table 1. As we can see, the data was collected from 1997 to 2020. The prices of audi used cars in this data range from 1490 to 145000 Euros, with average price approximately 22897 Euros. In addition, there are unreasonable data including 0 mile per gallon and 0 engine size probably due to data collection error.  
+
+```{r echo=FALSE}
+nv <- select_if(audi, is.numeric)
+mean <- round(sapply(nv, mean), 1)
+min <- round(sapply(nv, min), 1)
+median <- round(sapply(nv, median), 1)
+max <- round(sapply(nv, max), 1)
+data_summary <- cbind(mean, min, median, max)
+table <- data.frame(data_summary)
+knitr::kable(table, "pipe", caption = "Data Summary")
+```
+
+The distributions of numerical variables are not normal distributions (Figure 1). The year's distribution skewed to the left, while the rest of variables' skewed to the right. Most of our samples come from recent years (after 2015), and majority of the used audi cars have price lower than 50,000 dollars with the rest of them relatively more expensive. We might need to transform or standardize those variables, in order to meet modeling assumptions in the further analysis.  
+
+
+```{r echo=FALSE,fig.height = 4, fig.align = "center"}
+g2 <- ggplot(data = audi, aes(x=tax)) +
+  geom_density()
+g1 <- ggplot(data = audi, aes(x=price)) +
+  geom_density()
+g3 <- ggplot(data = audi, aes(x=mileage)) +
+  geom_density()
+g4 <- ggplot(data = audi, aes(x=mpg)) +
+  geom_density()
+g5 <- ggplot(data = audi, aes(x=engineSize)) +
+  geom_density()
+g6 <- ggplot(data = audi, aes(x=year)) +
+  geom_density()
+f1 <- ggarrange(g1,g2,g3,g4,g5,g6, 
+               ncol = 3, nrow=2)
+f1 <- ggarrange(g1,g2,g3,g4,g5,g6,ncol = 3, nrow = 2)
+annotate_figure(f1,
+                top = text_grob("Distributions of Numerical Variables", face = "bold", size = 12),
+                bottom = text_grob("Figure 1", size = 6))
+```
+
+From the correlation heat plot (Figure 2), we can see price has strongest correlation with mpg and weakest correlation with tax. For collinearity issues, mileage and year have relatively higher correlation coefficient (r = -0.79) as well as the correlation coefficient between mpg and tax (r = -0.64). Ridge regression model might help to deal with the multicollinearity here.
+
+```{r,warning=F,echo=FALSE,message=FALSE,fig.height = 3, fig.align = "center"}
+audi_num_sub <- audi[c("year","mileage","tax","mpg","engineSize","price")]
+cormat <- round(cor(audi_num_sub), 2)
+ff1 <- ggcorrplot(cormat,
+            outline.col = "white",
+            method = "circle",
+            ggtheme = ggplot2::theme_gray,
+            colors = c("#6D9EC1", "white", "#E46726"))+
+  theme(axis.text.x = element_text(size = 7))+
+  theme(axis.text.y = element_text(size = 7))+
+  theme(legend.text = element_text(size = 8))
+annotate_figure(ff1,
+                top = text_grob("Correlation Heat Map", face = "bold", size = 12),
+                bottom = text_grob("Figure 2", size = 6))
+```
+
+If we look at the scatter plot of tax and price (Figure 3), it also implies weak correlation relationship between these two variables (r = 0.36). What's more, results from scatter plots (Figure 3) indicated moderate positive correlation between price with registration year and engine size (r = 0.59 for both), while there is moderate negative correlation between price with distance used (mileage) and miles per galoon (r = -0.54 & -0.6 respectively).  
+
+```{r echo=FALSE,message=FALSE,fig.height = 4}
+
+g1 <- ggplot(data = audi, aes(tax, price)) +
+  geom_point(alpha=0.5, size=1,shape=21,color = "orange") +
+  labs(y="price", x="tax", subtitle="price vs tax")+
+  geom_smooth(method = lm,se = F, color = "light blue")
+
+g2 <- ggplot(data = audi, aes(mileage, price)) +
+  geom_point(alpha=0.5, size=1,shape=21,color = "orange") +
+  labs(y="price", x="mileage", subtitle="price vs mileage") +
+  geom_smooth(method = lm,se = F, color = "light blue")
+
+g3 <- ggplot(data = audi, aes(year, price)) +
+  geom_point(alpha=0.5, size=1,shape=21,color = "orange") +
+  labs(y="price", x="year", subtitle="price vs year") +
+  geom_smooth(method = lm,se = F, color = "light blue")
+
+g4 <- ggplot(data = audi, aes(mpg, price)) +
+  geom_point(alpha=0.5, size=1,shape=21,color = "orange") +
+  labs(y="price", x="mpg", subtitle="price vs mpg") +
+  geom_smooth(method = lm,se = F, color = "light blue")
+
+g5 <- ggplot(data = audi, aes(engineSize, price)) +
+  geom_point(alpha=0.5, size=1,shape=21,color = "orange") +
+  labs(y="price", x="engineSize", subtitle="price vs engineSize") +
+  geom_smooth(method = lm,se = F, color = "light blue")
+
+f1 <- ggarrange(g1,g2,g3,g4,g5, 
+               ncol = 3, nrow=2)
+annotate_figure(f1,
+                top = text_grob("Correlation between Price and Numerical Variables", face = "bold", size = 12),
+                bottom = text_grob("Figure 3", size = 6))
+
+```
+
+## Categorical Variable
+
+There are 3 categorical variables that could potentially affect the price of Audi used cars, which are model, transmission and fuelType.
+
+There are 26 models in total. As shown in Figure 4, the Distribution of Model shows that the numbers of cars in each model differ a lot. A3 is the most popular model, A1, A4 and Q3 are also relatively popular, while models in R and S are not really popular. Also, the plot of Price against Model indicates that Audi used cars in some models have generally higher prices than the cars in other models. For example, model R8 is possibly more expensive than most of the other models. Therefore, the model is a possible factor for price.
+
+```{r echo=FALSE,fig.height = 4,warning=FALSE}
+# bar plot of model
+g1 <- ggplot(data = audi, aes(x=model,fill = model)) +
+  geom_bar() +
+  ggtitle("Distribuion of Model") + 
+  theme(axis.text.x = element_text(size = 6))+
+  theme(plot.title = element_text(size = 10))
+# plot of price against model
+g2 <- ggplot(audi, aes(model, price, color=model)) + 
+  geom_point(size = 0.8) +
+  ggtitle("Price against Model") + 
+  theme(axis.text.x = element_text(size = 6))+
+  theme(plot.title = element_text(size = 10))
+# combine plots
+f1 <- ggarrange(g1,g2,ncol = 1, nrow = 2,heights = c(1,2),
+                common.legend = TRUE,
+                legend="right")
+annotate_figure(f1,
+                top = text_grob("Plots of Model", face = "bold", size = 12),
+                bottom = text_grob("Figure 4", size = 6))
+```
+There are 3 kinds of transmission, automatic, manual and semi-auto. As seen in Figure 5, the Distribution of Transmission shows that the number of cars with manual transmission is the highest while the cars with automatic transmission are the lowest. Also, the plot of Price against Transmission indicates that cars with automatic and semi-Auto transmissions have wider price range and higher price than the cars with manual transmissions. Therefore, transmission is also a potential factor for price. 
+
+There are 3 types of fuel, diesel, hybrid and petrol. As shown in Figure 6, the Distribution of Fuel Type shows that most of the used cars use diesel or petrol while only a few used cars use hybrid fuel. Also, the plot of Price against Fuel Type indicates that the cars using petrol have the largest price range from 0 to 150000 Euros, while cars using hybrid fuel have the smallest price range from 0 to 50000 Euros. Therefore, fuel type could probably affect the price of Audi used cars.  
+
+```{r echo=FALSE,fig.height = 4}
+# bar plot of transmission
+g1 <- ggplot(data = audi, aes(x=transmission,fill = transmission)) +
+  geom_bar() +
+  ggtitle("Distribuion of Transmission")+
+  theme(plot.title = element_text(size = 10))+
+  theme(axis.text.x = element_text(size = 10))
+# plot of price against Transmission
+g2 <- ggplot(audi, aes(transmission, price, color = transmission)) +
+  geom_point(size = 0.8) +
+  ggtitle("Price against Transmission")+
+  theme(plot.title = element_text(size = 10))+
+  theme(axis.text.x = element_text(size = 10))
+# combine plots
+f1 <- ggarrange(g1,g2,ncol = 1, nrow = 2,heights = c(1,1),
+                common.legend = TRUE,
+                legend="bottom")
+f1 <- annotate_figure(f1,
+                top = text_grob("Plots of Transmission", face = "bold", size = 12),
+                bottom = text_grob("Figure 5", size = 6))
+
+###############################################
+# bar plot of fuel type
+g1 <- ggplot(data = audi, aes(x=fuelType,fill = fuelType)) +
+  geom_bar() +
+  ggtitle("Distribuion of Fuel Type") +
+  theme(plot.title = element_text(size = 10))+
+  theme(axis.text.x = element_text(size = 10))
+# plot of price against fuelType
+g2 <- ggplot(audi, aes(fuelType, price, color = fuelType)) +
+  geom_point(size = 0.8) +
+  ggtitle("Price against Fuel Type")+
+  theme(plot.title = element_text(size = 10))+
+  theme(axis.text.x = element_text(size = 10))
+# combine plots
+f2 <- ggarrange(g1,g2,ncol = 1, nrow = 2,heights = c(1,1),
+                common.legend = TRUE,
+                legend="bottom")
+f2 <- annotate_figure(f2,
+                top = text_grob("Plots of FuelType", face = "bold", size = 12),
+                bottom = text_grob("Figure 6", size = 6))
+
+ggarrange(f1,f2,ncol = 2, nrow = 1)
+```
+
+# RESULTS AND ANALYSIS
+
+## Parametric Analysis
+To explore the how the exploratory variables affect the price of audi used cars, we could do regression models and examine the coefficients of each variable. From EDA, we found that all exploratory variables have some influence on the response variable price, so we will use all these variables to fit the models. Moreover, in order to reduce the mean squared errors and fit the better model, we will apply ridge and LASSO regression.
+
+We will first fit the following two models: ridge regression and LASSO regression, and then select the better one by computing and comparing their mean squared errors.
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+# Cite: https://stats.stackexchange.com/questions/72251/an-example-lasso-regression-using-glmnet-for-binary-outcome
+Y <- audi$price
+model <- as.factor(audi$model)
+transmission <- as.factor(audi$transmission)
+fuelType <- as.factor(audi$fuelType)
+cater <- model.matrix(Y ~ model + transmission + fuelType)[, -1]
+X <- as.matrix(data.frame(audi$year, audi$mileage, audi$tax, audi$mpg, audi$engineSize, cater))
+```
+
+### Ridge regression
+```{r echo=FALSE, warning=FALSE,message=FALSE,fig.height=3}
+par(mfrow = c(1,2))
+
+ridge <- glmnet(X,Y,alpha = 0)
+plot(ridge, xvar = "lambda")
+mtext("Figure 7(a)", side=1, line=4, at=10,cex=0.8)
+lam <- seq(1, 9, by=0.05)
+ridge.glmnet = cv.glmnet(X, Y, alpha = 0, lambda = exp(lam))
+plot(ridge.glmnet)
+mtext("Figure 7(b)", side=1, line=4, at=3,cex=0.8)
+
+
+best.lam.r = round(ridge.glmnet$lambda.min, 3)
+coefs.glmnet.r.min = coefficients(ridge.glmnet, s = "lambda.min")
+coefs.glmnet.r.1se = coefficients(ridge.glmnet, s = "lambda.1se")
+preds.glmnet.r.min = predict(ridge.glmnet, newx = X, s = "lambda.min")
+preds.glmnet.r.1se = predict(ridge.glmnet, newx = X, s = "lambda.1se")
+
+mse.r.min <- round(mean((Y - preds.glmnet.r.min)^2), 3)
+mse.r.1se <- round(mean((Y - preds.glmnet.r.1se)^2), 3)
+```
+As shown in Figure 7, the values of coefficients of numerical variables in the ridge regression model decrease as lambda increases. It is reasonable under the definition of ridge regression, that as the limitation increases, the coefficients shrink more. In addition, the minimum mean squared error is found at lambda equal to `r best.lam.r`. 
+
+Use lambda = `r best.lam.r`, the coefficients of the ridge regression model fitted are shown as following: (The coefficients of categorical variables are omitted.)
+
+The mean square estimation error is `r mse.r.min` using this ridge regression model.
+
+### LASSO regression
+```{r echo=FALSE,warning=FALSE,message=FALSE,fig.height=3}
+par(mfrow = c(1,2))
+
+lasso <- glmnet(X,Y,alpha = 0)
+plot(lasso, xvar = "lambda")
+mtext("Figure 8(a)", side=1, line=4, at=10,cex=0.8)
+lam <- seq(-3, 6, by=0.05)
+lasso.glmnet = cv.glmnet(X, Y, alpha = 1, lambda = exp(lam))
+plot(lasso.glmnet)
+mtext("Figure 8(b)", side=1, line=4, at=3,cex=0.8)
+
+best.lam.l = round(lasso.glmnet$lambda.min, 3)
+coefs.glmnet.l.min = coefficients(lasso.glmnet, s = "lambda.min")
+coefs.glmnet.l.1se = coefficients(lasso.glmnet, s = "lambda.1se")
+preds.glmnet.l.min = predict(lasso.glmnet, newx = X, s = "lambda.min")
+preds.glmnet.l.1se = predict(lasso.glmnet, newx = X, s = "lambda.1se")
+
+mse.l.min <- round(mean((Y - preds.glmnet.l.min)^2), 3)
+mse.l.1se <- round(mean((Y - preds.glmnet.l.1se)^2), 3)
+```
+As shown in Figure 8, the values of coefficients of numerical variables in the LASSO regression model decrease as lambda increases. It is reasonable under the definition of LASSO regression, that as the limitation increases, the coefficients shrink more. In addition, the minimum mean squared error is found at lambda equal to `r best.lam.l`.
+
+The mean square estimation error is `r mse.l.min` using this LASSO regression model.
+
+### Compare the two models
+
+Here are the root mean squared errors for the two models fitted above:
+```{r echo=FALSE}
+rmse.ridge <- sqrt(mse.r.min)
+rmse.lasso <- sqrt(mse.l.min)
+rmse <- cbind(rmse.ridge, rmse.lasso)
+table <- data.frame(rmse)
+knitr::kable(table, "pipe", caption = "RMSE of Different Models")
+```
+As shown in Table 2, the root mean squared error from LASSO regression model is the lowest. Therefore, we will choose LASSO regression model to estimate the price of audi used cars.
+
+Use lambda = `r best.lam.l`, the coefficients of the LASSO regression model fitted are shown as following: (The coefficients of categorical variables are omitted.)
+
+```{r echo=FALSE, warning=FALSE,message=FALSE}
+t2 <- data.frame(as.matrix(coefs.glmnet.l.min))
+t2$s1 <- round(t2$s1, 3)
+t2 <- data.frame(cbind(rownames(t2)[1:12],t2$s1[1:12],rownames(t2)[13:24],t2$s1[13:24],rownames(t2)[25:36],t2$s1[25:36]))
+colnames(t2) <- c("","Coefficients","","Coefficients","","Coefficients")
+options(knitr.kable.NA = '')
+knitr::kable(t2, "pipe", caption = "Coefficients in LASSO Regression Model")
+```
+According to the coefficients shown in Table 3, variables year and engine size have positive relationships with price. While the other three numerical variables mile age, tax and mile per gallon have negative relationships with price. We could notice that the price of audi used car increases as year increases, which means that the newer cars are generally more expensive. Also, as mile age, tax and mile per gallon increase, the price will decrease. Additionally, used cars with larger engines are probably more expensive. In addition, it could be found that models Q8, R8, RS4 and RS6 are generally more expensive than the other models. Moreover, for the transmission type, manual cars are cheaper than semi.automatic and automatic cars. Finally, for fuel type, cars using hybrid fuel are more expensive than cars using Petrol and Diesel.
+
+## Non-parametic Analysis
+
+From EDA section, the distribution of price with long right tail (Figure X) indicates that there are some second-hand Audi cars charged at a very high price. In the analysis, we set our budget equal to the medium price ($20200) and identified the 'expensive' cars as those with prices higher than 20,200 dollars. We aim to predict what kind of cars tend to be 'expensive'. This is a classification problem, therefore we decided to use the random forest model to predict the outcome and tune the hyperparameters through grid search.
+
+```{r echo=FALSE ,warning = FALSE}
+outter_fence <- 27990+1.5*(27990-15131)
+median <- median(audi$price)
+audi$high_price <- 0
+audi$high_price[which(audi$price > median)] <- 1
+audi$high_price <- as.factor(audi$high_price)
+```
+
+In the random forest model, since previous study (Probst and Boulesteix, 2017) has shown that the biggest performance gain can be achieved with over 100 trees, we set number of trees as a sufficiently large number (400). In the study conducted by Probst et al. (2018), tuning the parameter `mtry` provides the biggest average improvement of the AUC, while tune of the other parameters doesn't have obvious effect. Therefore, for simplicity and time-saving, we only tune the parameter `mtry`, which is the number of randomly selected in each tree. In terms of grid search, each axis of the grid is an algorithm parameter, and points in the grid are specific combinations of parameters. Because we are only tuning one parameter, the grid search is a linear search through the vector of number of possible predictors used in the model (from 1 to 8). For each value of `mtry`, we utilized 10 fold cross validation with 3 repeats to get the accuracy of each model. From the plot of fitting results (Figure 9) after repeated cross validation, our best model should include all eight predictors, and the accuracy is 0.94, which means if we have all information about the 8 variables, then we are able to predict whether the price of this Audi car is over our budget or not with 94% accuracy rate.
+
+```{r echo=FALSE}
+#cite: https://compgenomr.github.io/book/predicting-continuous-variables-regression-with-machine-learning.html#fig:predictAge
+#cite: https://machinelearningmastery.com/tune-machine-learning-algorithms-in-r/
+
+set.seed(18)
+trctrl <- trainControl(method="repeatedcv", number=10, repeats=3, search="grid")
+tunegrid <- expand.grid(.mtry=c(1:8),.min.node.size=c(1:5),.splitrule="gini")
+# train random forest model
+rfregFit <- train(high_price ~ .-price, 
+               data = audi, 
+               method = "ranger",
+               trControl=trctrl,
+               metric = "Accuracy",
+               # calculate importance
+               importance = "impurity", 
+               num.trees = 400,
+               tuneGrid = data.frame(mtry=c(1:8),
+                                     min.node.size = 5,
+                                     splitrule="gini")
+               )
+
+```
+
+The confusion matrix indicates that this random forest model have even performance in predicting expensive cars and not expensive cars for the training set, and the error of out-of-bag samples is `r rfregFit$finalModel$prediction.error`.
+```{r echo=FALSE}
+rfregFit$finalModel$confusion.matrix
+```
+
+Our variable importance ranking (Figure 10) is based on the decrease of Gini impurity when a variable is chosen to split a node. From the variable importance plot, `year`,`mileage` and `mpg` are the three most useful variables in random forest model. Therefore, if we plan to purchase or sell a used Audi car, the top 3 factors that we need to consider should be the car's registration year, mileage and miles per gallon.
+
+```{r echo=FALSE,warning=FALSE,message=FALSE}
+#par(mfrow=c(2,1))
+# final model
+p1 <- plot(rfregFit)
+#plot the variable importance rank
+p2 <- ggplot(stack(rfregFit$finalModel$variable.importance), aes(x=reorder(ind,values), y=values,fill=values))+
+      geom_bar(stat="identity", position="dodge")+ coord_flip()+
+      ylab("Variable Importance")+
+      xlab("")+
+      guides(fill=F)+
+      scale_fill_gradient(low="orange", high="dark green")
+
+p1 <- annotate_figure(p1,
+                bottom = text_grob("Figure 9", size = 6))
+
+p2 <- annotate_figure(p2,
+                bottom = text_grob("Figure 10", size = 6))
+ggarrange(p1,p2,ncol = 2, nrow = 1,widths = c(1,1.25))
+
+```
+
+# CONCLUSION
+
+## Findings
+In this study, two models have been applied to forecast the price of Audi used cars. While we expect that some covariates correlate with the price, our Lasso and Random Forest models suggest that each variable influences the price but to a different extent. In particular, among the numerical variables, there is a strong positive association between the year of registration and car price, whereas mileage and miles per gallon are quite negatively associated with the price. Moreover, how much the price responds to a rise in the mileage is negatively impacted by when the car is registered. This means that a used car registered in a more recent year is likely to be more expensive, and the effect will be partially offset by an increase in the mileage. Lastly, our study also found that a hybrid car has a higher price or a manual transmission car is cheaper when controlling other categorical variables.
+
+## Related Work
+Interestingly, what we have found is consistent with some of the ideas proposed in the study by Pudaruth, S. (2014) on the trend of vehicle production and consumer preferences. For example, while manufacturers tend to produce hybrid cars that depreciate slower than traditional ones, this is because the market becomes more aware of environmental concerns about the climate and the higher fuel efficiency of hybrid vehicles. In addition, year of registration, mileage, and mpg are considered to be key factors in determining the remaining value of a used car. The newer, less used and more fuel efficient the model, the higher the resale value.
+
+## Limitations
+However, we would also like to admit three major areas of improvement in our study. 
+The first limitation is that we derive our model based on limited data collected from an observational study indicating only association. We thereby raised one concern that it was yet not possible to conclude a cause-and-effect relationship between used car price and explanatory variables. After finding the correlation between the price and its covariates, we can work on further research to address this issue.
+Furthermore, we only have a small subset of factors that can affect the used car price in this study. One issue is that the inflation of car prices is not considered here when the models launched earlier could have a much lower initial price and resale value than the newer models could. Another prime importance is the rising fuel prices which are tied to the prices on fuel-efficient vehicles. Some other special factors which buyers attach importance to are the locality of previous owners, e.g., whether the car had been involved in serious accidents and whether it is a lady-driven car. The look and feel of the car could certainly contribute a lot to the price. As we can see, the price depends on a large number of attributes. Unfortunately, information about all these factors are not always available and the buyer must make the decision to purchase at a certain price based on a few factors only.
+Lastly, although small data sets can offer the advantage of sharp focus on particular issues, their narrow focus carries disadvantages as well. The challenges come from model building and the opportunity to synthesize the elements of regression learned one at a time from smaller data sets. With a larger and more richly structured data set, our future studies can dive deeper and further break down into more variables in order to better examine and explore if the rising price is the result of some other reasons.
+
+\clearpage
+
+# REFERENCE
+
+Kuiper, S. (2008). Introduction to Multiple Regression: How Much Is Your Car Worth?. Journal of Statistics Education, 16(3).
+
+Pudaruth, S. (2014). Predicting the price of used cars using machine learning techniques. Int. J. Inf. Comput. Technol, 4(7), 753-764.
+
+Puteri, C. K., & Safitri, L. N. (2020, February). Analysis of linear regression on used car sales in Indonesia. In Journal of Physics: Conference Series (Vol. 1469, No. 1, p. 012143). IOP Publishing.  
+
+Probst, P., & Boulesteix, A. L. (2017). To tune or not to tune the number of trees in random forest. J. Mach. Learn. Res., 18(1), 6673-6690.  
+
+Probst, P., Bischl, B., & Boulesteix, A. L. (2018). Tunability: Importance of hyperparameters of machine learning algorithms. arXiv preprint arXiv:1802.09596.  
+
